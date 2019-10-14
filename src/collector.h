@@ -40,8 +40,8 @@ public:
     size_t size();
     bool write_block(std::string &str);
     bool write_block(uint8_t *s, size_t size);
-    size_t read_block(std::string &dest);
-    size_t read_block(uint8_t *dest, size_t &dest_size);
+    size_t pop_front(std::string &dest);
+    size_t pop_front(uint8_t *dest, size_t &dest_size);
 };
 
 inline RingBuffer::RingBuffer() :
@@ -165,14 +165,10 @@ inline bool RingBuffer::write_block(uint8_t *s, size_t size)
         else
         {
             if (cur_pos == buffer_.size())
-            {
                 cur_pos = 0;
-            }
 
             if (cur_pos == read_pos_ - 1)
-            {
                 return false;
-            }
         }
         buffer_[cur_pos] = static_cast<char>(s[i]);
         cur_pos++;
@@ -183,12 +179,10 @@ inline bool RingBuffer::write_block(uint8_t *s, size_t size)
 
 // Return read block size.
 // Return block size in dest_size, if dest_size too small.
-inline size_t RingBuffer::read_block(uint8_t *dest, size_t &dest_size)
+inline size_t RingBuffer::pop_front(uint8_t *dest, size_t &dest_size)
 {
     if (read_pos_ == write_pos_)
-    {
         return 0;
-    }
 
     size_t size_block = 0;
     size_t cur_pos = read_pos_;
@@ -196,10 +190,9 @@ inline size_t RingBuffer::read_block(uint8_t *dest, size_t &dest_size)
     {
         size_block += (buffer_[cur_pos] << (8 * i));
         ++cur_pos;
+
         if (cur_pos == buffer_.size())
-        {
             cur_pos = 0;
-        }
     }
 
     size_t res_size = 0;
@@ -208,6 +201,7 @@ inline size_t RingBuffer::read_block(uint8_t *dest, size_t &dest_size)
     {
         ++cur_pos;
         ++res_size;
+
         if (cur_pos == buffer_.size())
         {
             size_to_buffer_end = res_size;
@@ -246,7 +240,7 @@ inline size_t RingBuffer::read_block(uint8_t *dest, size_t &dest_size)
 
 
 // Return read block size.
-inline size_t RingBuffer::read_block(std::string &dest)
+inline size_t RingBuffer::pop_front(std::string &dest)
 {
     size_t size_block = 0;
     size_t cur_pos = read_pos_;
@@ -254,10 +248,9 @@ inline size_t RingBuffer::read_block(std::string &dest)
     {
         size_block += (buffer_[cur_pos] << (8 * i));
         ++cur_pos;
+
         if (cur_pos == buffer_.size())
-        {
             cur_pos = 0;
-        }
     }
 
     size_t res_size = 0;
@@ -266,6 +259,7 @@ inline size_t RingBuffer::read_block(std::string &dest)
     {
         ++cur_pos;
         ++res_size;
+
         if (cur_pos == buffer_.size())
         {
             size_to_buffer_end = res_size;
@@ -435,7 +429,7 @@ inline size_t Collector::read(std::string &dest, int waitable_ms)
             }
         }
     }
-    size = buffer_.read_block(dest);
+    size = buffer_.pop_front(dest);
     _cv.notify_all();
     return size;
 }
@@ -462,7 +456,7 @@ inline size_t Collector::read(uint8_t *dest, size_t dest_size, int waitable_ms)
             }
         }
     }
-    size = buffer_.read_block(dest, dest_size);
+    size = buffer_.pop_front(dest, dest_size);
     _cv.notify_all();
     return size;
 }
