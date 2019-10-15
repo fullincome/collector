@@ -19,8 +19,9 @@
 
 
 // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-// Кольцевой буффер, не thread safe.
-// Хранит и выдает данные блоками.
+// Ring buffer, not thread safe.
+// Write pointer not reach read pointer.
+// If read pointer reach write pointer - buffer is empty.
 class RingBuffer
 {
 private:
@@ -32,12 +33,9 @@ public:
     RingBuffer();
     RingBuffer(size_t size);
 
-    long long read_pos() { return read_pos_; }
-    long long write_pos() { return write_pos_; }
-    bool can_read() { return read_pos_ != write_pos_; }
-
     void resize(size_t size);
     size_t size();
+    bool is_empty();
     bool write_block(std::string &str);
     bool write_block(uint8_t *s, size_t size);
     size_t pop_front(std::string &dest);
@@ -66,6 +64,11 @@ inline void RingBuffer::resize(size_t size)
 inline size_t RingBuffer::size()
 {
     return buffer_.size();
+}
+
+bool RingBuffer::is_empty()
+{
+    return read_pos_ == write_pos_;
 }
 
 inline bool RingBuffer::write_block(std::string &str)
@@ -178,13 +181,15 @@ inline bool RingBuffer::write_block(uint8_t *s, size_t size)
 }
 
 // Return read block size.
-// Return block size in dest_size, if dest_size too small.
+// Return block size in dest_size if dest_size too small.
 inline size_t RingBuffer::pop_front(uint8_t *dest, size_t &dest_size)
 {
-    if (read_pos_ == write_pos_)
+    if (is_empty())
         return 0;
 
+    // Read size of block data
     size_t size_block = 0;
+    size_t size_to_buffer_end = -1;
     size_t cur_pos = read_pos_;
     for (int i = 0; i < BYTES_SIZE; ++i)
     {
@@ -195,54 +200,40 @@ inline size_t RingBuffer::pop_front(uint8_t *dest, size_t &dest_size)
             cur_pos = 0;
     }
 
-    size_t res_size = 0;
-    size_t size_to_buffer_end = (cur_pos = 0 ? 0 : -1);
-    for (size_t i = 0; i < size_block; ++i)
+    if (dest_size < size_block)
     {
-        ++cur_pos;
-        ++res_size;
-
-        if (cur_pos == buffer_.size())
-        {
-            size_to_buffer_end = res_size;
-            cur_pos = 0;
-        }
+        dest_size = size_block;
+        return 0;
     }
 
-    if (dest_size < res_size)
+    if (cur_pos + size_block > size())
+        size_to_buffer_end = size() - cur_pos;
+
+    if (size_to_buffer_end == -1)
     {
-        dest_size = res_size;
-        return 0;
+        // cur pos -> end
+        memcpy(dest, buffer_.data() + cur_pos, size_block);
+        read_pos_ = (cur_pos + size_block) % size();
     }
     else
     {
-        if (size_to_buffer_end == -1)
-        {
-            // Read pos -> end
-            memcpy(dest, buffer_.data() + read_pos_ + BYTES_SIZE, res_size);
-        }
-        else if (size_to_buffer_end == 0)
-        {
-            // Zero pos -> end
-            memcpy(dest, buffer_.data(), res_size);
-        }
-        else
-        {
-            // Read pos -> end buffer; zero pos -> end;
-            memcpy(dest, buffer_.data() + read_pos_ + BYTES_SIZE, size_to_buffer_end);
-            memcpy(dest, buffer_.data(), res_size - size_to_buffer_end);
-        }
+        // cur_pos -> end buffer; zero pos -> end;
+        memcpy(dest, buffer_.data() + cur_pos, size_to_buffer_end);
+        memcpy(dest, buffer_.data(), size_block - size_to_buffer_end);
+        read_pos_ = size_block - size_to_buffer_end;
     }
 
-    read_pos_ = cur_pos;
-    return res_size;
+    return size_block;
 }
-
 
 // Return read block size.
 inline size_t RingBuffer::pop_front(std::string &dest)
 {
+    if (is_empty())
+        return 0;
+
     size_t size_block = 0;
+    size_t size_to_buffer_end = -1;
     size_t cur_pos = read_pos_;
     for (int i = 0; i < BYTES_SIZE; ++i)
     {
@@ -253,40 +244,25 @@ inline size_t RingBuffer::pop_front(std::string &dest)
             cur_pos = 0;
     }
 
-    size_t res_size = 0;
-    size_t size_to_buffer_end = (cur_pos = 0 ? 0 : -1);
-    for (size_t i = 0; i < size_block; ++i)
-    {
-        ++cur_pos;
-        ++res_size;
+    if (cur_pos + size_block > size())
+        size_to_buffer_end = size() - cur_pos;
 
-        if (cur_pos == buffer_.size())
-        {
-            size_to_buffer_end = res_size;
-            cur_pos = 0;
-        }
-    }
-
-    dest.reserve(res_size);
+    dest.reserve(size_block);
     if (size_to_buffer_end == -1)
     {
-        // Read pos -> end
-        dest.append(buffer_.data() + read_pos_ + BYTES_SIZE, res_size);
-    }
-    else if (size_to_buffer_end == 0)
-    {
-        // Zero pos -> end
-        dest.append(buffer_.data(), res_size);
+        // cur pos -> end
+        dest.append(buffer_.data() + cur_pos, size_block);
+        read_pos_ = (cur_pos + size_block) % size();
     }
     else
     {
-        // Read pos -> end buffer; zero pos -> end;
-        dest.append(buffer_.data() + read_pos_ + BYTES_SIZE, size_to_buffer_end);
-        dest.append(buffer_.data(), res_size - size_to_buffer_end);
+        // cur_pos -> end buffer; zero pos -> end;
+        dest.append(buffer_.data() + cur_pos, size_to_buffer_end);
+        dest.append(buffer_.data(), size_block - size_to_buffer_end);
+        read_pos_ = size_block - size_to_buffer_end;
     }
 
-    read_pos_ = cur_pos;
-    return res_size;
+    return size_block;
 }
 // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
@@ -413,7 +389,7 @@ inline size_t Collector::read(std::string &dest, int waitable_ms)
     std::unique_lock<std::mutex> lock(_mutex);
     if (waitable_ms >= 0)
     {
-        while (!buffer_.can_read())
+        while (!buffer_.is_empty())
         {
             if (waitable_ms == 0)
             {
@@ -440,7 +416,7 @@ inline size_t Collector::read(uint8_t *dest, size_t dest_size, int waitable_ms)
     std::unique_lock<std::mutex> lock(_mutex);
     if (waitable_ms >= 0)
     {
-        while (!buffer_.can_read())
+        while (!buffer_.is_empty())
         {
             if (waitable_ms == 0)
             {
