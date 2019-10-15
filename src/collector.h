@@ -17,7 +17,6 @@
 #define MbToB(x) (x) * 1024 * 1024
 #define collector_callback std::function<void(uint8_t *buf, size_t size)>
 
-
 // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 // Ring buffer, not thread safe.
 // Write pointer not reach read pointer.
@@ -36,8 +35,8 @@ public:
     void resize(size_t size);
     size_t size();
     bool is_empty();
-    bool write_block(std::string &str);
-    bool write_block(uint8_t *s, size_t size);
+    bool push_back(std::string &str);
+    bool push_back(uint8_t *s, size_t size);
     size_t pop_front(std::string &dest);
     size_t pop_front(uint8_t *dest, size_t &dest_size);
 };
@@ -71,112 +70,117 @@ inline bool RingBuffer::is_empty()
     return read_pos_ == write_pos_;
 }
 
-inline bool RingBuffer::write_block(std::string &str)
+// Write pointer cannot be closer than shown below:
+//
+// ta2 ] [x_data 3] _ [ xxxx_data 1 ] [ xx_da
+//                  ^ ^
+//                 wp rp
+//
+// At maximum capacity, 1 byte will be empty.
+inline bool RingBuffer::push_back(std::string &str)
 {
-    size_t size = str.size();
+    if (str.size() >= size())
+        return 0;
+        
+    size_t size_block = str.size();
+    size_t size_block_with_len = size_block + BYTES_SIZE;
+    size_t size_to_buffer_end = -1;
     size_t cur_pos = write_pos_;
+
+    if (cur_pos < read_pos_)
+    {
+        if (cur_pos + size_block_with_len >= read_pos_)
+            return 0;
+    }
+    else
+    {
+        if (cur_pos + size_block_with_len >= size())
+        {
+            if ((cur_pos + size_block_with_len) % size() >= read_pos_)
+                return 0;
+
+            // Set size_to_buffer_end only if BYTES_SIZE bytes
+            // fit at end of a buffer. Otherwise, the pointer will
+            // return to the begining when writing the size.
+            if (cur_pos + BYTES_SIZE < size())
+                size_to_buffer_end = size() - cur_pos - BYTES_SIZE;
+        }
+    }
+
     for (int i = 0; i < BYTES_SIZE; ++i)
     {
-        if (cur_pos == buffer_.size() - 1)
-        {
-            if (read_pos_ == 0)
-            {
-                return false;
-            }
-        }
-        else
-        {
-            if (cur_pos == buffer_.size())
-            {
-                cur_pos = 0;
-            }
-
-            if (cur_pos == read_pos_ - 1)
-            {
-                return false;
-            }
-        }
-        buffer_[cur_pos] = ((size >> (i * 8)) & 0XFF);
+        buffer_[cur_pos] = ((size_block >> (i * 8)) & 0XFF);
         cur_pos++;
+
+        if (cur_pos == size())
+            cur_pos = 0;
     }
 
-    for (size_t i = 0; i < size; ++i)
+    if (size_to_buffer_end == -1)
     {
-        if (cur_pos == buffer_.size() - 1)
-        {
-            if (read_pos_ == 0)
-            {
-                return false;
-            }
-        }
-        else
-        {
-            if (cur_pos == buffer_.size())
-            {
-                cur_pos = 0;
-            }
-
-            if (cur_pos == read_pos_ - 1)
-            {
-                return false;
-            }
-        }
-        buffer_[cur_pos] = str[i];
-        cur_pos++;
+        memcpy(buffer_.data() + cur_pos, str.c_str(), size_block);
+        write_pos_ = cur_pos + size_block;
     }
-    write_pos_ = cur_pos;
+    else
+    {
+        memcpy(buffer_.data() + cur_pos, str.c_str(), size_to_buffer_end);
+        memcpy(buffer_.data(), str.c_str() + size_to_buffer_end, size_block - size_to_buffer_end);
+        write_pos_ = size_block - size_to_buffer_end;
+    }
+
     return true;
 }
 
-inline bool RingBuffer::write_block(uint8_t *s, size_t size)
+inline bool RingBuffer::push_back(uint8_t *s, size_t size_block)
 {
+    size_t size_block_with_len = size_block + BYTES_SIZE;
+    size_t size_to_buffer_end = -1;
     size_t cur_pos = write_pos_;
+
+    if (size_block >= size())
+        return 0;
+
+    if (cur_pos < read_pos_)
+    {
+        if (cur_pos + size_block_with_len >= read_pos_)
+            return 0;
+    }
+    else
+    {
+        if (cur_pos + size_block_with_len >= size())
+        {
+            if ((cur_pos + size_block_with_len) % size() >= read_pos_)
+                return 0;
+
+            // Set size_to_buffer_end only if BYTES_SIZE bytes
+            // fit at end of a buffer. Otherwise, the pointer will
+            // return to the begining when writing the size.
+            if (cur_pos + BYTES_SIZE < size())
+                size_to_buffer_end = size() - cur_pos - BYTES_SIZE;
+        }
+    }
+
     for (int i = 0; i < BYTES_SIZE; ++i)
     {
-        if (cur_pos == buffer_.size() - 1)
-        {
-            if (read_pos_ == 0)
-            {
-                return false;
-            }
-        }
-        else
-        {
-            if (cur_pos == buffer_.size())
-            {
-                cur_pos = 0;
-            }
-
-            if (cur_pos == read_pos_ - 1)
-            {
-                return false;
-            }
-        }
-        buffer_[cur_pos] = ((size >> (i * 8)) & 0XFF);
+        buffer_[cur_pos] = ((size_block >> (i * 8)) & 0XFF);
         cur_pos++;
+
+        if (cur_pos == size())
+            cur_pos = 0;
     }
 
-    for (size_t i = 0; i < size; ++i)
+    if (size_to_buffer_end == -1)
     {
-        if (cur_pos == buffer_.size() - 1)
-        {
-            if (read_pos_ == 0)
-            {
-                return false;
-            }
-        }
-        else
-        {
-            if (cur_pos == buffer_.size())
-                cur_pos = 0;
-
-            if (cur_pos == read_pos_ - 1)
-                return false;
-        }
-        buffer_[cur_pos] = static_cast<char>(s[i]);
-        cur_pos++;
+        memcpy(buffer_.data() + cur_pos, s, size_block);
+        write_pos_ = cur_pos + size_block;
     }
-    write_pos_ = cur_pos;
+    else
+    {
+        memcpy(buffer_.data() + cur_pos, s, size_to_buffer_end);
+        memcpy(buffer_.data(), s + size_to_buffer_end, size_block - size_to_buffer_end);
+        write_pos_ = size_block - size_to_buffer_end;
+    }
+
     return true;
 }
 
@@ -206,14 +210,14 @@ inline size_t RingBuffer::pop_front(uint8_t *dest, size_t &dest_size)
         return 0;
     }
 
-    if (cur_pos + size_block > size())
+    if (cur_pos + size_block >= size())
         size_to_buffer_end = size() - cur_pos;
 
     if (size_to_buffer_end == -1)
     {
         // cur pos -> end
         memcpy(dest, buffer_.data() + cur_pos, size_block);
-        read_pos_ = (cur_pos + size_block) % size();
+        read_pos_ = cur_pos + size_block;
     }
     else
     {
@@ -244,7 +248,7 @@ inline size_t RingBuffer::pop_front(std::string &dest)
             cur_pos = 0;
     }
 
-    if (cur_pos + size_block > size())
+    if (cur_pos + size_block >= size())
         size_to_buffer_end = size() - cur_pos;
 
     dest.reserve(size_block);
@@ -252,7 +256,7 @@ inline size_t RingBuffer::pop_front(std::string &dest)
     {
         // cur pos -> end
         dest.append(buffer_.data() + cur_pos, size_block);
-        read_pos_ = (cur_pos + size_block) % size();
+        read_pos_ = cur_pos + size_block;
     }
     else
     {
@@ -361,7 +365,7 @@ inline bool Collector::push(std::string &str)
     }
 
     std::unique_lock<std::mutex> lock(_mutex);
-    while (!buffer_.write_block(str))
+    while (!buffer_.push_back(str))
     {
         _cv.wait(lock);
     }
@@ -378,7 +382,7 @@ inline bool Collector::push(uint8_t *src, size_t size)
     }
 
     std::unique_lock<std::mutex> lock(_mutex);
-    while (!buffer_.write_block(src, size))
+    while (!buffer_.push_back(src, size))
     {
         _cv.wait(lock);
     }
@@ -393,7 +397,7 @@ inline size_t Collector::read(std::string &dest, int waitable_ms)
     std::unique_lock<std::mutex> lock(_mutex);
     if (waitable_ms >= 0)
     {
-        while (!buffer_.is_empty())
+        while (buffer_.is_empty())
         {
             if (waitable_ms == 0)
             {
@@ -420,7 +424,7 @@ inline size_t Collector::read(uint8_t *dest, size_t dest_size, int waitable_ms)
     std::unique_lock<std::mutex> lock(_mutex);
     if (waitable_ms >= 0)
     {
-        while (!buffer_.is_empty())
+        while (buffer_.is_empty())
         {
             if (waitable_ms == 0)
             {
