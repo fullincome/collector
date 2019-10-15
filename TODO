@@ -1,4 +1,3 @@
 TODO list
 * rewrite write_block()
 * write info in readme
-* rewrite can_read()
