@@ -66,7 +66,7 @@ inline size_t RingBuffer::size()
     return buffer_.size();
 }
 
-bool RingBuffer::is_empty()
+inline bool RingBuffer::is_empty()
 {
     return read_pos_ == write_pos_;
 }
@@ -267,14 +267,16 @@ inline size_t RingBuffer::pop_front(std::string &dest)
 // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 
-
-
-
-
 // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-// Collector - обертка, которая управляет кольцевым буфером.
-// Thread safe, за исключением set_size() и set_callback(),
-// предполагается однократный вызов этих функций на этапе инициализации.
+/*
+* Collector - RingBuffer wrapper.
+* Thread safe, except set_size() and set_callback(),
+* a single call both function is expected at the initialization stage.
+*/
+
+/*
+* For more custom handler() use inheritance and override that.
+*/
 #define READ_TIMEOUT_MS 3000
 class Collector
 {
@@ -284,8 +286,10 @@ private:
     RingBuffer buffer_;
     collector_callback _call_back;
 
+protected:
     size_t get_size();
-    void handler();
+    virtual void handler();
+
 public:
     Collector();
     Collector(size_t size);
@@ -465,7 +469,7 @@ inline bool Collector::start()
     }
 
 }
-
 // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
 
 #endif // COLLECTOR_HPP
