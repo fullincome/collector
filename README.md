@@ -23,14 +23,14 @@ int main()
     std::thread thread1(
         [&]()
         {
-                collector.push("Data from first thread");
+            collector.push("Data from first thread");
         });
 
     ...
     std::thread thread2(
         [&]()
         {
-                collector.push("Data from second thread");
+            collector.push("Data from second thread");
         });
     ...
 }
