@@ -223,7 +223,7 @@ inline size_t RingBuffer::read_block(uint8_t *dest, size_t &dest_size)
     {
         // cur_pos -> end buffer; zero pos -> end;
         memcpy(dest, buffer_.data() + cur_pos, size_to_buffer_end);
-        memcpy(dest, buffer_.data(), size_block - size_to_buffer_end);
+        memcpy(dest + size_to_buffer_end, buffer_.data(), size_block - size_to_buffer_end);
         read_pos_ = size_block - size_to_buffer_end;
     }
 
