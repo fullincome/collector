@@ -35,10 +35,10 @@ public:
     void resize(size_t size);
     size_t size();
     bool is_empty();
-    bool push_back(std::string &str);
-    bool push_back(uint8_t *s, size_t size);
-    size_t pop_front(std::string &dest);
-    size_t pop_front(uint8_t *dest, size_t &dest_size);
+    bool write_block(std::string &str);
+    bool write_block(uint8_t *s, size_t size);
+    size_t read_block(std::string &dest);
+    size_t read_block(uint8_t *dest, size_t &dest_size);
 };
 
 inline RingBuffer::RingBuffer() :
@@ -77,7 +77,7 @@ inline bool RingBuffer::is_empty()
 //                 wp rp
 //
 // At maximum capacity, 1 byte will be empty.
-inline bool RingBuffer::push_back(std::string &str)
+inline bool RingBuffer::write_block(std::string &str)
 {
     if (str.size() >= size())
         return 0;
@@ -131,7 +131,7 @@ inline bool RingBuffer::push_back(std::string &str)
     return true;
 }
 
-inline bool RingBuffer::push_back(uint8_t *s, size_t size_block)
+inline bool RingBuffer::write_block(uint8_t *s, size_t size_block)
 {
     size_t size_block_with_len = size_block + BYTES_SIZE;
     size_t size_to_buffer_end = -1;
@@ -186,7 +186,7 @@ inline bool RingBuffer::push_back(uint8_t *s, size_t size_block)
 
 // Return read block size.
 // Return block size in dest_size if dest_size too small.
-inline size_t RingBuffer::pop_front(uint8_t *dest, size_t &dest_size)
+inline size_t RingBuffer::read_block(uint8_t *dest, size_t &dest_size)
 {
     if (is_empty())
         return 0;
@@ -231,7 +231,7 @@ inline size_t RingBuffer::pop_front(uint8_t *dest, size_t &dest_size)
 }
 
 // Return read block size.
-inline size_t RingBuffer::pop_front(std::string &dest)
+inline size_t RingBuffer::read_block(std::string &dest)
 {
     if (is_empty())
         return 0;
@@ -365,7 +365,7 @@ inline bool Collector::push(std::string &str)
     }
 
     std::unique_lock<std::mutex> lock(_mutex);
-    while (!buffer_.push_back(str))
+    while (!buffer_.write_block(str))
     {
         _cv.wait(lock);
     }
@@ -382,7 +382,7 @@ inline bool Collector::push(uint8_t *src, size_t size)
     }
 
     std::unique_lock<std::mutex> lock(_mutex);
-    while (!buffer_.push_back(src, size))
+    while (!buffer_.write_block(src, size))
     {
         _cv.wait(lock);
     }
@@ -413,7 +413,7 @@ inline size_t Collector::read(std::string &dest, int waitable_ms)
             }
         }
     }
-    size = buffer_.pop_front(dest);
+    size = buffer_.read_block(dest);
     _cv.notify_all();
     return size;
 }
@@ -440,7 +440,7 @@ inline size_t Collector::read(uint8_t *dest, size_t dest_size, int waitable_ms)
             }
         }
     }
-    size = buffer_.pop_front(dest, dest_size);
+    size = buffer_.read_block(dest, dest_size);
     _cv.notify_all();
     return size;
 }
