@@ -10,28 +10,28 @@ Collects data blocks from threads and calls custom callback for each block.
 ```
 void collector_callback(uint8_t* buf, size_t size)
 {
-	LOG_MESSAGE(buf, sizeof(uint8_t), size, stdout);
+    LOG_MESSAGE(buf, sizeof(uint8_t), size, stdout);
 }
 
 int main()
 {
     ...
     Collector collector(COLLECTOR_SIZE, collector_callback);
-	collector.start();
+    collector.start();
 
     ...
-	std::thread thread1(
-		[&]()
-		{
-				collector.push("Data from first thread");
-		});
+    std::thread thread1(
+        [&]()
+        {
+                collector.push("Data from first thread");
+        });
 
     ...
-	std::thread thread2(
-		[&]()
-		{
-				collector.push("Data from second thread");
-		});
+    std::thread thread2(
+        [&]()
+        {
+                collector.push("Data from second thread");
+        });
     ...
 }
 
