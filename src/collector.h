@@ -221,7 +221,7 @@ inline size_t RingBuffer::read_block(uint8_t *dest, size_t &dest_size)
     size_t cur_pos = read_pos_;
     for (int i = 0; i < BYTES_SIZE; ++i)
     {
-        size_block += (buffer_[cur_pos] << (8 * i));
+        size_block += (static_cast<unsigned char>(buffer_[cur_pos]) << (8 * i));
         ++cur_pos;
 
         if (cur_pos == buffer_.size())
@@ -265,7 +265,7 @@ inline size_t RingBuffer::read_block(std::string &dest)
     size_t cur_pos = read_pos_;
     for (int i = 0; i < BYTES_SIZE; ++i)
     {
-        size_block += (buffer_[cur_pos] << (8 * i));
+        size_block += (static_cast<unsigned char>(buffer_[cur_pos]) << (8 * i));
         ++cur_pos;
 
         if (cur_pos == buffer_.size())
