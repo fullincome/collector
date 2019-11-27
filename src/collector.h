@@ -37,9 +37,10 @@ SOFTWARE.
 
 
 #define BYTES_SIZE 4
+#define EMPTY_SIZE (size_t)-1
 #define SIZE_COLLECTOR_MEMORY 500
 #define MbToB(x) (x) * 1024 * 1024
-#define collector_callback std::function<void(uint8_t *buf, size_t size)>
+#define collector_callback std::function<void(void *args, const uint8_t *buf, size_t size)>
 
 // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 // Ring buffer, not thread safe.
@@ -105,10 +106,10 @@ inline bool RingBuffer::write_block(std::string &str)
 {
     if (str.size() >= size())
         return 0;
-        
+
     size_t size_block = str.size();
     size_t size_block_with_len = size_block + BYTES_SIZE;
-    size_t size_to_buffer_end = -1;
+    size_t size_to_buffer_end = EMPTY_SIZE;
     size_t cur_pos = write_pos_;
 
     if (cur_pos < read_pos_)
@@ -140,7 +141,7 @@ inline bool RingBuffer::write_block(std::string &str)
             cur_pos = 0;
     }
 
-    if (size_to_buffer_end == -1)
+    if (size_to_buffer_end == EMPTY_SIZE)
     {
         memcpy(buffer_.data() + cur_pos, str.c_str(), size_block);
         write_pos_ = cur_pos + size_block;
@@ -158,7 +159,7 @@ inline bool RingBuffer::write_block(std::string &str)
 inline bool RingBuffer::write_block(uint8_t *s, size_t size_block)
 {
     size_t size_block_with_len = size_block + BYTES_SIZE;
-    size_t size_to_buffer_end = -1;
+    size_t size_to_buffer_end = EMPTY_SIZE;
     size_t cur_pos = write_pos_;
 
     if (size_block >= size())
@@ -193,7 +194,7 @@ inline bool RingBuffer::write_block(uint8_t *s, size_t size_block)
             cur_pos = 0;
     }
 
-    if (size_to_buffer_end == -1)
+    if (size_to_buffer_end == EMPTY_SIZE)
     {
         memcpy(buffer_.data() + cur_pos, s, size_block);
         write_pos_ = cur_pos + size_block;
@@ -217,7 +218,7 @@ inline size_t RingBuffer::read_block(uint8_t *dest, size_t &dest_size)
 
     // Read size of block data
     size_t size_block = 0;
-    size_t size_to_buffer_end = -1;
+    size_t size_to_buffer_end = EMPTY_SIZE;
     size_t cur_pos = read_pos_;
     for (int i = 0; i < BYTES_SIZE; ++i)
     {
@@ -237,7 +238,7 @@ inline size_t RingBuffer::read_block(uint8_t *dest, size_t &dest_size)
     if (cur_pos + size_block >= size())
         size_to_buffer_end = size() - cur_pos;
 
-    if (size_to_buffer_end == -1)
+    if (size_to_buffer_end == EMPTY_SIZE)
     {
         // cur pos -> end
         memcpy(dest, buffer_.data() + cur_pos, size_block);
@@ -255,13 +256,13 @@ inline size_t RingBuffer::read_block(uint8_t *dest, size_t &dest_size)
 }
 
 // Return read block size.
-inline size_t RingBuffer::read_block(std::string &dest)
+inline size_t RingBuffer::read_block(std::string& dest)
 {
     if (is_empty())
         return 0;
 
     size_t size_block = 0;
-    size_t size_to_buffer_end = -1;
+    size_t size_to_buffer_end = EMPTY_SIZE;
     size_t cur_pos = read_pos_;
     for (int i = 0; i < BYTES_SIZE; ++i)
     {
@@ -276,7 +277,7 @@ inline size_t RingBuffer::read_block(std::string &dest)
         size_to_buffer_end = size() - cur_pos;
 
     dest.reserve(size_block);
-    if (size_to_buffer_end == -1)
+    if (size_to_buffer_end == EMPTY_SIZE)
     {
         // cur pos -> end
         dest.append(buffer_.data() + cur_pos, size_block);
@@ -309,62 +310,85 @@ inline size_t RingBuffer::read_block(std::string &dest)
 class Collector
 {
 private:
-    std::mutex _mutex;
-    std::condition_variable _cv;
+    std::mutex mutex_;
+    std::mutex mutex_start_;
+    std::condition_variable cv_;
+    std::thread thread_;
     RingBuffer buffer_;
-    collector_callback _call_back;
+    void* cb_arg_;
+    bool is_start_;
 
 protected:
+    collector_callback call_back_;
+
+    void* get_cbarg();
     size_t get_size();
-    virtual void handler();
+    void handler();
 
 public:
     Collector();
     Collector(size_t size);
-    Collector(size_t size, collector_callback call_back);
-    Collector(const Collector &collector);
-    Collector &operator=(Collector &collector);
+    Collector(size_t size, collector_callback call_back, void* cb_arg);
+    Collector(const Collector& collector);
+    Collector& operator=(Collector& collector);
 
     void set_size(size_t size);
     void set_callback(collector_callback call_back);
-    bool push(std::string &str);
-    bool push(uint8_t *src, size_t size);
+    void set_cbarg(void *cb_arg_);
+    bool push(std::string& str);
+    bool push(uint8_t* src, size_t size);
     // waitable_ms: < 0 - не ждем
     //              = 0 - ждем пока не будет данных
     //              > 0 - ждем пока не будет данных, или не истечет время waitable_ms
-    size_t read(std::string &dest, int waitable_ms = READ_TIMEOUT_MS);
-    size_t read(uint8_t *dest, size_t dest_size, int waitable_ms = READ_TIMEOUT_MS);
+    size_t read(std::string& dest, int waitable_ms = READ_TIMEOUT_MS);
+    size_t read(uint8_t* dest, size_t &dest_size, int waitable_ms = READ_TIMEOUT_MS);
+
+    bool is_start();
     bool start();
+    bool stop();
 };
 
 inline Collector::Collector() :
-    buffer_(MbToB(SIZE_COLLECTOR_MEMORY))
-{
-    _call_back = NULL;
-}
+    buffer_(MbToB(SIZE_COLLECTOR_MEMORY)),
+    cb_arg_(NULL),
+    is_start_(0),
+    call_back_(NULL)
+{}
 
 inline Collector::Collector(size_t size) :
-    buffer_(size)
-{
-    _call_back = NULL;
-}
-
-inline Collector::Collector(size_t size, collector_callback call_back) :
     buffer_(size),
-    _call_back(call_back)
+    cb_arg_(NULL),
+    is_start_(0),
+    call_back_(NULL)
 {}
 
-inline Collector::Collector(const Collector &collector) :
+inline Collector::Collector(size_t size, collector_callback call_back, void* cb_arg) :
+    buffer_(size),
+    cb_arg_(cb_arg),
+    is_start_(0),
+    call_back_(call_back)
+{}
+
+inline Collector::Collector(const Collector& collector) :
     buffer_(collector.buffer_),
-    _call_back(collector._call_back)
+    cb_arg_(collector.cb_arg_),
+    is_start_(collector.is_start_),
+    call_back_(collector.call_back_)
 {}
 
-inline Collector &Collector::operator=(Collector &collector)
+inline Collector& Collector::operator=(Collector& collector)
 {
     buffer_ = collector.buffer_;
-    _call_back = collector._call_back;
+    cb_arg_ = collector.cb_arg_;
+    is_start_ = collector.is_start_;
+    call_back_ = collector.call_back_;
     return *this;
 };
+
+inline void* Collector::get_cbarg()
+{
+    return cb_arg_;
+}
 
 inline size_t Collector::get_size()
 {
@@ -378,7 +402,12 @@ inline void Collector::set_size(size_t size)
 
 inline void Collector::set_callback(collector_callback call_back)
 {
-    _call_back = call_back;
+    call_back_ = call_back;
+}
+
+inline void Collector::set_cbarg(void* cb_arg)
+{
+    cb_arg_ = cb_arg;
 }
 
 inline bool Collector::push(std::string &str)
@@ -388,12 +417,12 @@ inline bool Collector::push(std::string &str)
         return 0;
     }
 
-    std::unique_lock<std::mutex> lock(_mutex);
+    std::unique_lock<std::mutex> lock(mutex_);
     while (!buffer_.write_block(str))
     {
-        _cv.wait(lock);
+        cv_.wait(lock);
     }
-    _cv.notify_all();
+    cv_.notify_all();
 
     return 1;
 }
@@ -405,12 +434,12 @@ inline bool Collector::push(uint8_t *src, size_t size)
         return 0;
     }
 
-    std::unique_lock<std::mutex> lock(_mutex);
+    std::unique_lock<std::mutex> lock(mutex_);
     while (!buffer_.write_block(src, size))
     {
-        _cv.wait(lock);
+        cv_.wait(lock);
     }
-    _cv.notify_all();
+    cv_.notify_all();
 
     return 1;
 }
@@ -418,19 +447,19 @@ inline bool Collector::push(uint8_t *src, size_t size)
 inline size_t Collector::read(std::string &dest, int waitable_ms)
 {
     size_t size;
-    std::unique_lock<std::mutex> lock(_mutex);
+    std::unique_lock<std::mutex> lock(mutex_);
     if (waitable_ms >= 0)
     {
         while (buffer_.is_empty())
         {
             if (waitable_ms == 0)
             {
-                _cv.wait(lock);
+                cv_.wait(lock);
             }
             else
             {
                 if (std::cv_status::timeout ==
-                    _cv.wait_for(lock, std::chrono::milliseconds(waitable_ms)))
+                    cv_.wait_for(lock, std::chrono::milliseconds(waitable_ms)))
                 {
                     return 0;
                 }
@@ -438,26 +467,26 @@ inline size_t Collector::read(std::string &dest, int waitable_ms)
         }
     }
     size = buffer_.read_block(dest);
-    _cv.notify_all();
+    cv_.notify_all();
     return size;
 }
 
 inline size_t Collector::read(uint8_t *dest, size_t dest_size, int waitable_ms)
 {
     size_t size;
-    std::unique_lock<std::mutex> lock(_mutex);
+    std::unique_lock<std::mutex> lock(mutex_);
     if (waitable_ms >= 0)
     {
         while (buffer_.is_empty())
         {
             if (waitable_ms == 0)
             {
-                _cv.wait(lock);
+                cv_.wait(lock);
             }
             else
             {
                 if (std::cv_status::timeout ==
-                    _cv.wait_for(lock, std::chrono::milliseconds(waitable_ms)))
+                    cv_.wait_for(lock, std::chrono::milliseconds(waitable_ms)))
                 {
                     return 0;
                 }
@@ -465,37 +494,60 @@ inline size_t Collector::read(uint8_t *dest, size_t dest_size, int waitable_ms)
         }
     }
     size = buffer_.read_block(dest, dest_size);
-    _cv.notify_all();
+    cv_.notify_all();
     return size;
 }
 
 inline void Collector::handler()
 {
-    uint8_t buf[10000] = { 0 };
-    size_t size = 0;
+    std::string str;
     while (true)
     {
-        size = read(buf, sizeof(buf), READ_TIMEOUT_MS);
-        if (size)
+        str.clear();
+        if (read(str, READ_TIMEOUT_MS))
         {
-            _call_back(buf, size);
+            call_back_(cb_arg_, (uint8_t*)str.c_str(), str.size());
+        }
+        // Был вызван метод stop() и все логи сохранены
+        if (is_start() == 0 && str.size() == 0)
+        {
+            break;
         }
     }
 }
 
+inline bool Collector::is_start()
+{
+    return is_start_;
+}
+
 inline bool Collector::start()
 {
-    if (_call_back != NULL)
+    std::lock_guard<std::mutex> lock(mutex_start_);
+    if (call_back_ != NULL)
     {
-        std::thread thread(&Collector::handler, this);
-        thread.detach();
+        if (is_start_ == 0)
+        {
+            is_start_ = 1;
+            thread_ = std::thread(&Collector::handler, this);
+        }
         return true;
     }
     else
     {
         return false;
     }
+}
 
+inline bool Collector::stop()
+{
+    std::lock_guard<std::mutex> lock(mutex_start_);
+    if (is_start_ == 1)
+    {
+        is_start_ = 0;
+        thread_.join();
+    }
+    return true;
 }
 // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
